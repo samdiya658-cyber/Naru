@@ -1,0 +1,12 @@
+# Local database on your own machine. Start: docker compose up -d   (data stays in the named volume)
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: naru
+      POSTGRES_PASSWORD: change-me-long-random
+      POSTGRES_DB: naru
+    ports: ["127.0.0.1:5432:5432"]      # only this computer can reach it
+    volumes: ["naru_pg:/var/lib/postgresql/data", "./schema_local.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro"]
+volumes: { naru_pg: {} }
