@@ -123,7 +123,7 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
         long: long ? 'answer' : undefined,
       }, e => {
         if (e.type === 'start') { newId = e.conversationId; setCid(e.conversationId); }
-        else if (e.type === 'delta') setMsgs(m => m.map(x => x.id === aid ? { ...x, text: x.text + e.text } : x));
+        else if (e.type === 'delta') setMsgs(m => m.map(x => x.id === aid ? { ...x, text: (e.replace ? e.text : x.text + e.text) } : x));
         else if (e.type === 'progress') setProg(e);
         else if (e.type === 'error') setErr(e.error);
         else if (e.type === 'done') setMsgs(m => m.map(x => x.id === aid ? { ...x, status: e.status } : x));

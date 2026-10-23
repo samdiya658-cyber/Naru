@@ -122,23 +122,36 @@ export function createHandler({ pool, provider = providerFromEnv(), dist = null,
       if (!promptText) promptText = cleanText || text || 'a creative digital artwork';
       const seed = Math.floor(Math.random() * 10000000);
       const pollKey = (process.env.POLLINATIONS_API_KEY || process.env.POLLEN_API_KEY || '').trim();
-      const imgUrl = pollKey
+      const apiUrl = pollKey
         ? `https://gen.pollinations.ai/image/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}&key=${encodeURIComponent(pollKey)}`
-        : `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}`;
+        : `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?nologo=true&seed=${seed}`;
 
-      let outText = `Here is your generated image for **${promptText}**:\n\n![${promptText.replace(/[[\]]/g, '')}](${imgUrl})\n\n*(Generated via Pollinations.ai)*`;
+      ev({ type: 'delta', text: '🎨 Generating image with AI, please wait a moment...\n\n' });
 
-      // Check if the free tier rate limit was triggered
+      let outText = '';
       try {
-        const checkRes = await fetch(imgUrl, { signal: AbortSignal.timeout(6000) });
-        if (checkRes.status === 402 || checkRes.status === 429) {
-          const errData = await checkRes.json().catch(() => null);
-          const msg = errData?.error?.message || 'Free tier cooldown: 1 image every 45 seconds.';
-          outText = `⚠️ **Image Service Cooldown**\n\n${msg}\n\n- ⏳ **Please wait ~30 seconds** and ask again.\n- 🔑 **For instant, unlimited generation**: Get a free API key at [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys) and set \`POLLINATIONS_API_KEY\` in your Vercel Environment Variables.`;
-        }
-      } catch {}
+        const fetchRes = await fetch(apiUrl, { signal: AbortSignal.timeout(20000) });
+        const contentType = fetchRes.headers.get('content-type') || '';
 
-      ev({ type: 'delta', text: outText });
+        if (fetchRes.ok && contentType.includes('image')) {
+          const arrayBuf = await fetchRes.arrayBuffer();
+          const base64Data = Buffer.from(arrayBuf).toString('base64');
+          const dataUrl = `data:${contentType.split(';')[0]};base64,${base64Data}`;
+          outText = `Here is your generated image for **${promptText}**:\n\n![${promptText.replace(/[[\]]/g, '')}](${dataUrl})\n\n*(Generated via Pollinations AI)*`;
+        } else {
+          const errBody = await fetchRes.text().catch(() => '');
+          let msg = 'The free image cluster is currently in a 45-second cooldown per IP.';
+          try {
+            const parsed = JSON.parse(errBody);
+            if (parsed?.error?.message) msg = parsed.error.message;
+          } catch {}
+          outText = `⚠️ **Image Generation Notice**\n\n${msg}\n\n- ⏳ Please wait ~30 seconds and try again.\n- 🔑 **For unlimited instant generation**: Get a free API key at [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys) and add \`POLLINATIONS_API_KEY\` to your Vercel Environment Variables.`;
+        }
+      } catch (err) {
+        outText = `⚠️ **Image Generation Notice**\n\nThe image provider took too long to respond. Please try again with a slightly simpler prompt, or add a free \`POLLINATIONS_API_KEY\` from [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys) to bypass limits.`;
+      }
+
+      ev({ type: 'delta', text: outText, replace: true });
       await pool.query('update messages set content = $1, status = $2, stop_reason = $3 where id = $4', [JSON.stringify([{ type: 'text', text: outText }]), 'complete', 'end', am]).catch(e => console.error(e.message));
       ev({ type: 'done', status: 'complete', jobId: null });
       return res.end();

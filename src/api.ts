@@ -35,7 +35,7 @@ export const api = {
   },
 };
 
-export type ChatEvent = { type: 'start'; conversationId: string; messageId: string } | { type: 'delta'; text: string } | ({ type: 'progress' } & Progress) | { type: 'error'; error: string } | { type: 'done'; status: string; jobId: string | null };
+export type ChatEvent = { type: 'start'; conversationId: string; messageId: string } | { type: 'delta'; text: string; replace?: boolean } | ({ type: 'progress' } & Progress) | { type: 'error'; error: string } | { type: 'done'; status: string; jobId: string | null };
 
 /** POST /api/chat and read the server-sent events. Abort the signal to stop: the server keeps what was written so far. */
 export async function chat(body: object, onEvent: (e: ChatEvent) => void, signal: AbortSignal): Promise<{ status: number; error?: string }> {
