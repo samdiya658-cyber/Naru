@@ -140,7 +140,7 @@ export function createHandler({ pool, provider = providerFromEnv(), dist = null,
         if (ac.signal.aborted) { status = 'stopped'; stop = 'aborted'; }
       }
     } catch (e) {
-      if (ac.signal.aborted) { status = 'stopped'; stop = 'aborted'; } else { status = 'error'; stop = 'error'; ev({ type: 'error', error: 'The model could not answer. Please try again.' }); console.error('chat error:', e.message); }
+      if (ac.signal.aborted) { status = 'stopped'; stop = 'aborted'; } else { status = 'error'; stop = 'error'; ev({ type: 'error', error: e.message || 'The model could not answer. Please try again.' }); console.error('chat error:', e.message); }
     }
     finished = true;
     await pool.query('update messages set content = $1, status = $2, stop_reason = $3 where id = $4', [JSON.stringify(out ? [{ type: 'text', text: out }] : []), status, stop, am]).catch(e => console.error(e.message));

@@ -22,19 +22,30 @@ export function mockProvider({ delay = 0 } = {}) {
 }
 
 export function openaiProvider({ baseUrl, apiKey = 'none', model = 'naru', fetchImpl = fetch }) {
-  const url = baseUrl.replace(/\/+$/, '') + '/chat/completions';
-  const body = (system, messages, maxTokens, stream) => JSON.stringify({ model, stream, max_tokens: maxTokens, messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages] });
-  const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + apiKey };
+  const cleanKey = String(apiKey ?? '').trim().replace(/^["']|["']$/g, '');
+  const cleanBase = String(baseUrl ?? '').trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '');
+  const cleanModel = String(model ?? 'naru').trim().replace(/^["']|["']$/g, '');
+  const url = cleanBase + '/chat/completions';
+  const body = (system, messages, maxTokens, stream) => JSON.stringify({ model: cleanModel, stream, max_tokens: maxTokens, messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages] });
+  const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + cleanKey };
   return {
     name: 'openai',
     async complete({ system, messages, maxTokens = 512, signal }) {
       const r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, false), signal });
-      if (!r.ok) throw new Error('model server error ' + r.status);
+      if (!r.ok) {
+        let details = '';
+        try { const j = await r.json(); details = j.error?.message || JSON.stringify(j); } catch { details = await r.text().catch(() => ''); }
+        throw new Error(`Model server error ${r.status}: ${details || r.statusText}`);
+      }
       return (await r.json()).choices?.[0]?.message?.content ?? '';
     },
     async *stream({ system, messages, maxTokens = 1024, signal }) {
       const r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, true), signal });
-      if (!r.ok || !r.body) throw new Error('model server error ' + r.status);
+      if (!r.ok || !r.body) {
+        let details = '';
+        try { const j = await r.json(); details = j.error?.message || JSON.stringify(j); } catch { details = await r.text().catch(() => ''); }
+        throw new Error(`Model server error ${r.status}: ${details || r.statusText}`);
+      }
       const dec = new TextDecoder(); let buf = '';
       for await (const chunk of r.body) {
         buf += dec.decode(chunk, { stream: true });
@@ -89,6 +100,15 @@ export async function resolveProvider(env = process.env) {
 }
 
 export function providerFromEnv(env = process.env) {
-  return env.NARU_PROVIDER === 'openai' ? openaiProvider({ baseUrl: env.NARU_BASE_URL || 'http://127.0.0.1:8080/v1', apiKey: env.NARU_API_KEY, model: env.NARU_MODEL || 'naru' }) : mockProvider({ delay: Number(env.NARU_MOCK_DELAY || 0) });
+  const prov = String(env.NARU_PROVIDER || '').trim().toLowerCase().replace(/^["']|["']$/g, '');
+  const isCustom = prov === 'openai' || Boolean(env.NARU_BASE_URL || env.NARU_API_KEY);
+  if (isCustom) {
+    return openaiProvider({
+      baseUrl: env.NARU_BASE_URL || 'http://127.0.0.1:8080/v1',
+      apiKey: env.NARU_API_KEY,
+      model: env.NARU_MODEL || 'llama-3.1-8b-instant'
+    });
+  }
+  return mockProvider({ delay: Number(env.NARU_MOCK_DELAY || 0) });
 }
 
