@@ -38,8 +38,20 @@ export function openaiProvider({ baseUrl, apiKey = 'none', model = 'naru', fetch
       const mRes = await fetchImpl('https://api.groq.com/openai/v1/models', { headers: { authorization: 'Bearer ' + cleanKey } });
       if (mRes.ok) {
         const mData = await mRes.json();
-        const ids = (mData.data || []).map(x => x.id).filter(id => !id.includes('whisper') && !id.includes('guard'));
-        return ids[0] || null;
+        const allIds = (mData.data || []).map(x => x.id);
+        // Exclude audio models, guard models, and experimental models requiring terms acceptance
+        const nonGated = allIds.filter(id => 
+          !id.includes('whisper') && 
+          !id.includes('guard') && 
+          !id.includes('canopy') && 
+          !id.includes('orpheus')
+        );
+        // Prioritize official Llama production models:
+        const bestLlama = nonGated.find(id => id.includes('llama-3.3') || id.includes('llama3-70b') || id.includes('llama3-8b') || id.includes('llama-3.1'))
+          || nonGated.find(id => id.includes('llama'))
+          || nonGated.find(id => id.includes('mixtral') || id.includes('gemma'))
+          || nonGated[0];
+        return bestLlama || null;
       }
     } catch {}
     return null;
@@ -49,7 +61,7 @@ export function openaiProvider({ baseUrl, apiKey = 'none', model = 'naru', fetch
     name: 'openai',
     async complete({ system, messages, maxTokens = 512, signal }) {
       let r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, false), signal });
-      if (r.status === 404 && cleanKey.startsWith('gsk_')) {
+      if ((r.status === 404 || r.status === 400) && cleanKey.startsWith('gsk_')) {
         const auto = await getAvailableModel();
         if (auto && auto !== cleanModel) {
           r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, false, auto), signal });
@@ -64,7 +76,7 @@ export function openaiProvider({ baseUrl, apiKey = 'none', model = 'naru', fetch
     },
     async *stream({ system, messages, maxTokens = 1024, signal }) {
       let r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, true), signal });
-      if (r.status === 404 && cleanKey.startsWith('gsk_')) {
+      if ((r.status === 404 || r.status === 400) && cleanKey.startsWith('gsk_')) {
         const auto = await getAvailableModel();
         if (auto && auto !== cleanModel) {
           r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, true, auto), signal });
