@@ -17,8 +17,14 @@ import { chunkText, answerLongInput, writeLongAnswer } from './longtext.mjs';
 const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.resolve('uploads');
 try { if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true }); } catch {}
 
-const SYSTEM = `You are Naru, an intelligent AI coworker. You think carefully, solve complex tasks on behalf of the user, write robust code, build interactive web applications, create vector graphics, and produce high-quality deliverables.
-When asked to create interactive apps, games, tools, components, SVG graphics, or comprehensive documents, provide them in a clean code block with the language and title (for example: \`\`\`html title="Interactive App" or \`\`\`svg title="Vector Graphic") so they automatically render in the interactive artifact workspace.
+const SYSTEM = `You are Naru, an intelligent AI coworker. You think carefully, solve complex tasks on behalf of the user, write robust code, build interactive web applications, create vector graphics, analyze data, and produce high-quality deliverables.
+When working on multi-step tasks or building apps, you can outline your execution steps at the beginning using:
+<coworkPlan>
+[✓] Step 1 done
+[▶] Step 2 in progress
+[ ] Step 3 next
+</coworkPlan>
+When creating interactive apps, games, tools, components, SVG graphics, or comprehensive documents, provide them in a clean code block with the language and title (for example: \`\`\`html title="Interactive App" or \`\`\`svg title="Vector Graphic") so they automatically render in the interactive artifact workspace.
 Always ensure HTML apps are self-contained with styles and scripts included so they work seamlessly in the live preview.`;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 const LONG_ANSWER_RE = /\b(\d{3,5}[- ]?words?|essay|full report|detailed (guide|article|report)|step[- ]by[- ]step guide|long answer)\b/i;
@@ -136,7 +142,27 @@ export function createHandler({ pool, provider = providerFromEnv(), dist = null,
       } else {
         let userPrompt = text;
         if (attachments.length > 0) {
-          userPrompt = attachments.map(a => `[Attached image: ${a.name}]`).join(' ') + (text ? '\n' + text : '\n(The user sent this image)');
+          const fileDescriptions = [];
+          for (const a of attachments) {
+            const isImg = (a.mime || '').startsWith('image/');
+            if (isImg) {
+              fileDescriptions.push(`[Attached image: ${a.name}]`);
+            } else {
+              let fileBody = '';
+              try {
+                const attRow = await pool.query('select storage_path from attachments where id = $1', [a.id]);
+                if (attRow.rows[0] && fs.existsSync(attRow.rows[0].storage_path)) {
+                  fileBody = fs.readFileSync(attRow.rows[0].storage_path, 'utf8').slice(0, 100000);
+                }
+              } catch {}
+              if (fileBody) {
+                fileDescriptions.push(`[Attached file: ${a.name}]:\n\`\`\`\n${fileBody}\n\`\`\``);
+              } else {
+                fileDescriptions.push(`[Attached file: ${a.name}]`);
+              }
+            }
+          }
+          userPrompt = fileDescriptions.join('\n\n') + (text ? '\n\n' + text : '\n(The user provided these files)');
         }
         for await (const piece of provider.stream({ system: SYSTEM + (body.system ? '\n' + String(body.system).slice(0, 2000) : ''), messages: [...hist, { role: 'user', content: userPrompt }], maxTokens: 1024, signal: ac.signal })) { out += piece; ev({ type: 'delta', text: piece }); }
         if (ac.signal.aborted) { status = 'stopped'; stop = 'aborted'; }
@@ -194,14 +220,12 @@ export function createHandler({ pool, provider = providerFromEnv(), dist = null,
       if (p === '/api/me' && m === 'GET') return send(res, 200, { email: user.email, name: user.display_name });
       if (p === '/api/upload' && m === 'POST') {
         const b = await readJson(req, 15_000_000);
-        const { name = 'image.png', mime = 'image/png', data } = b;
-        if (!data) return send(res, 400, { error: 'No image data provided.' });
-        const allowedMimes = ['image/png', 'image/jpeg', 'image/webp'];
-        if (!allowedMimes.includes(mime)) return send(res, 400, { error: 'Supported image types are PNG, JPEG, and WebP.' });
+        const { name = 'file.txt', mime = 'text/plain', data } = b;
+        if (!data) return send(res, 400, { error: 'No file data provided.' });
         const raw = String(data).replace(/^data:[^;]+;base64,/, '');
         const buf = Buffer.from(raw, 'base64');
-        if (buf.length === 0 || buf.length > 10 * 1024 * 1024) return send(res, 400, { error: 'Image must be between 1 byte and 10MB.' });
-        const ext = mime === 'image/jpeg' ? '.jpg' : mime === 'image/webp' ? '.webp' : '.png';
+        if (buf.length === 0 || buf.length > 10 * 1024 * 1024) return send(res, 400, { error: 'File must be between 1 byte and 10MB.' });
+        const ext = path.extname(name).toLowerCase() || (mime === 'image/jpeg' ? '.jpg' : mime === 'image/webp' ? '.webp' : '.png');
         const filename = crypto.randomUUID() + ext;
         const filepath = path.join(uploadsDir, filename);
         fs.writeFileSync(filepath, buf);

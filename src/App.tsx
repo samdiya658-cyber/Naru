@@ -3,9 +3,14 @@ import { api, chat, type Attachment, type Conv, type Msg, type Progress } from '
 import { Markdown } from './components/Markdown';
 import { ArtifactPanel } from './components/ArtifactPanel';
 import { ArtifactCard } from './components/ArtifactCard';
+import { TaskChecklist, parseTaskPlan } from './components/TaskChecklist';
 import { extractArtifacts, type Artifact } from './lib/artifacts';
 
 type Me = { email: string; name: string } | null;
+
+function isImageAttachment(att: Attachment) {
+  return (att.type && att.type.startsWith('image/')) || /\.(png|jpe?g|webp|gif|svg)$/i.test(att.name);
+}
 
 function Auth({ onDone }: { onDone: () => void }) {
   const [mode, setMode] = useState<'in' | 'up'>('in'), [email, setEmail] = useState(''), [pw, setPw] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState(false);
@@ -37,6 +42,7 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
   const [lightbox, setLightbox] = useState<string | null>(null);
   const [q, setQ] = useState(''), [open, setOpen] = useState(false), [copied, setCopied] = useState('');
   const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
+  const lastAutoOpenedMsgId = useRef<string | null>(null);
   const ac = useRef<AbortController | null>(null), end = useRef<HTMLDivElement>(null), ta = useRef<HTMLTextAreaElement>(null), fileInput = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async (query = '') => { const r = await api.list(query); if (r.status === 200) setConvs(r.data.conversations); }, []);
@@ -45,24 +51,25 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
   useEffect(() => { end.current?.scrollIntoView({ block: 'end' }); }, [msgs, prog]);
   useEffect(() => { const t = ta.current; if (t) { t.style.height = 'auto'; t.style.height = Math.min(200, t.scrollHeight) + 'px'; } }, [text]);
 
-  // Auto-activate latest artifact if none is open
+  // Auto-activate latest artifact when generated
   useEffect(() => {
     if (msgs.length > 0) {
       const last = msgs[msgs.length - 1];
-      if (last.role === 'assistant' && last.text && !activeArtifact) {
+      if (last.role === 'assistant' && last.text && last.id !== lastAutoOpenedMsgId.current) {
         const { artifacts } = extractArtifacts(last.text, last.id);
         if (artifacts.length > 0) {
+          lastAutoOpenedMsgId.current = last.id;
           setActiveArtifact(artifacts[artifacts.length - 1]);
         }
       }
     }
-  }, [msgs, activeArtifact]);
+  }, [msgs]);
 
   async function openChat(id: string) { const r = await api.open(id); if (r.status === 200) { setCid(id); setMsgs(r.data.messages); setErr(''); setOpen(false); setActiveArtifact(null); } }
   function newChat() { setCid(null); setMsgs([]); setAttachments([]); setErr(''); setOpen(false); setActiveArtifact(null); ta.current?.focus(); }
 
   async function handleFiles(files: FileList | File[]) {
-    const list = Array.from(files).filter(f => f.type.startsWith('image/'));
+    const list = Array.from(files);
     if (!list.length) return;
     setUploading(true); setErr('');
     for (const f of list) {
@@ -71,7 +78,7 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
       if (res.status === 201 && res.data.attachment) {
         setAttachments(prev => [...prev, res.data.attachment!]);
       } else {
-        setErr(res.data.error ?? 'Failed to upload image.');
+        setErr(res.data.error ?? 'Failed to upload file.');
       }
     }
     setUploading(false);
@@ -80,8 +87,8 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
 
   const onPaste = (e: React.ClipboardEvent) => {
     if (e.clipboardData.files && e.clipboardData.files.length > 0) {
-      const imgFiles = Array.from(e.clipboardData.files).filter(f => f.type.startsWith('image/'));
-      if (imgFiles.length > 0) { e.preventDefault(); void handleFiles(imgFiles); }
+      e.preventDefault();
+      void handleFiles(e.clipboardData.files);
     }
   };
 
@@ -180,16 +187,27 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
               {m.attachments && m.attachments.length > 0 && (
                 <div className="bubble-attachments">
                   {m.attachments.map(att => (
-                    <img key={att.id} src={att.url} alt={att.name} className="bubble-img" onClick={() => setLightbox(att.url)} title={att.name + ' (click to view)'} />
+                    isImageAttachment(att) ? (
+                      <img key={att.id} src={att.url} alt={att.name} className="bubble-img" onClick={() => setLightbox(att.url)} title={att.name + ' (click to view)'} />
+                    ) : (
+                      <a key={att.id} href={att.url} target="_blank" rel="noreferrer" download={att.name} className="bubble-doc-chip" title="Click to download attachment">
+                        <span className="bubble-doc-icon">📄</span>
+                        <span className="bubble-doc-name">{att.name}</span>
+                        {att.size ? <span className="bubble-doc-size">{Math.round(att.size / 1024)} KB</span> : null}
+                      </a>
+                    )
                   ))}
                 </div>
               )}
               {m.text && <div className="bubble-text">{m.text}</div>}
             </div>
           ) : (() => {
-            const { artifacts } = extractArtifacts(m.text, m.id);
+            const plan = parseTaskPlan(m.text);
+            const cleanText = plan ? plan.cleanText : m.text;
+            const { artifacts } = extractArtifacts(cleanText, m.id);
             return (
               <div className="reply">
+                {plan && <TaskChecklist steps={plan.steps} />}
                 {artifacts.length > 0 && (
                   <div className="artifacts-list">
                     {artifacts.map(art => (
@@ -202,9 +220,9 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
                     ))}
                   </div>
                 )}
-                {m.text ? (
+                {cleanText ? (
                   <Markdown
-                    text={m.text}
+                    text={cleanText}
                     onImageClick={url => setLightbox(url)}
                     onOpenArtifact={art => setActiveArtifact({
                       id: 'art-' + Date.now(),
@@ -220,7 +238,7 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
                 ) : null}
                 {m.status === 'stopped' && <p className="muted note">Stopped. This is what was written so far.</p>}
                 {m.status === 'error' && <p className="err note">This answer failed. Try sending the message again.</p>}
-                {m.status !== 'streaming' && m.text && <div className="actions"><button onClick={() => void copy(m.id, m.text)}>{copied === m.id ? 'Copied' : 'Copy'}</button></div>}
+                {m.status !== 'streaming' && cleanText && <div className="actions"><button onClick={() => void copy(m.id, cleanText)}>{copied === m.id ? 'Copied' : 'Copy'}</button></div>}
               </div>
             );
           })()}
@@ -238,10 +256,14 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
         {attachments.length > 0 && (
           <div className="pending-strip">
             {attachments.map((att, idx) => (
-              <div key={att.id || idx} className="pending-chip">
-                <img src={att.url} alt={att.name} className="pending-thumb" onClick={() => setLightbox(att.url)} />
+              <div key={att.id || idx} className={isImageAttachment(att) ? "pending-chip" : "pending-chip pending-doc-chip"}>
+                {isImageAttachment(att) ? (
+                  <img src={att.url} alt={att.name} className="pending-thumb" onClick={() => setLightbox(att.url)} />
+                ) : (
+                  <span className="pending-doc-icon">📄</span>
+                )}
                 <span className="pending-name">{att.name}</span>
-                <button type="button" className="pending-remove" onClick={() => setAttachments(a => a.filter((_, i) => i !== idx))} title="Remove image">✕</button>
+                <button type="button" className="pending-remove" onClick={() => setAttachments(a => a.filter((_, i) => i !== idx))} title="Remove file">✕</button>
               </div>
             ))}
             {uploading && <span className="pending-uploading">Uploading...</span>}
@@ -249,8 +271,8 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
         )}
 
         <div className="row">
-          <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" multiple style={{ display: 'none' }} onChange={e => e.target.files && void handleFiles(e.target.files)} />
-          <button type="button" className="btn-icon" title="Import / attach images" onClick={() => fileInput.current?.click()}>
+          <input ref={fileInput} type="file" accept="image/*,.txt,.csv,.json,.md,.js,.ts,.jsx,.tsx,.py,.html,.css,.xml,.yaml,.yml,.sql,.pdf" multiple style={{ display: 'none' }} onChange={e => e.target.files && void handleFiles(e.target.files)} />
+          <button type="button" className="btn-icon" title="Attach files (images, data, code, documents)" onClick={() => fileInput.current?.click()}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>
           </button>
           <textarea

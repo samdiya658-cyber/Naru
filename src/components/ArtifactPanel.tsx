@@ -11,20 +11,26 @@ export function ArtifactPanel({
 }) {
   const [tab, setTab] = useState<'preview' | 'code'>(artifact.type === 'code' && artifact.language !== 'html' ? 'code' : 'preview');
   const [copied, setCopied] = useState(false);
+  const [content, setContent] = useState(artifact.content);
+  const [isEditing, setIsEditing] = useState(false);
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-  // Update default tab when artifact changes
+  // Sync content when new artifact is passed
   useEffect(() => {
+    setContent(artifact.content);
     if (artifact.type === 'code' && artifact.language !== 'html' && artifact.language !== 'svg') {
       setTab('code');
     } else {
       setTab('preview');
     }
-  }, [artifact.id, artifact.type, artifact.language]);
+    setIsEditing(false);
+  }, [artifact.id, artifact.content, artifact.type, artifact.language]);
+
+  const isModified = content !== artifact.content;
 
   const copyCode = async () => {
     try {
-      await navigator.clipboard.writeText(artifact.content);
+      await navigator.clipboard.writeText(content);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {}
@@ -41,7 +47,7 @@ export function ArtifactPanel({
     else if (artifact.language === 'css') ext = '.css';
 
     const safeTitle = (artifact.title || 'artifact').toLowerCase().replace(/[^a-z0-9_-]/g, '-').slice(0, 32);
-    const blob = new Blob([artifact.content], { type: 'text/plain;charset=utf-8' });
+    const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -55,15 +61,15 @@ export function ArtifactPanel({
     if (w) {
       if (artifact.type === 'html' || artifact.language === 'html') {
         w.document.open();
-        w.document.write(artifact.content);
+        w.document.write(content);
         w.document.close();
       } else if (artifact.type === 'svg') {
         w.document.open();
-        w.document.write(`<!DOCTYPE html><html><head><title>${artifact.title}</title><style>body{margin:0;display:grid;place-items:center;min-height:100vh;background:#121212;}</style></head><body>${artifact.content}</body></html>`);
+        w.document.write(`<!DOCTYPE html><html><head><title>${artifact.title}</title><style>body{margin:0;display:grid;place-items:center;min-height:100vh;background:#121212;}</style></head><body>${content}</body></html>`);
         w.document.close();
       } else {
         w.document.open();
-        w.document.write(`<!DOCTYPE html><html><head><title>${artifact.title}</title><style>body{margin:24px;font-family:monospace;white-space:pre-wrap;background:#18181b;color:#f4f4f5;}</style></head><body>${artifact.content.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</body></html>`);
+        w.document.write(`<!DOCTYPE html><html><head><title>${artifact.title}</title><style>body{margin:24px;font-family:monospace;white-space:pre-wrap;background:#18181b;color:#f4f4f5;}</style></head><body>${content.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</body></html>`);
         w.document.close();
       }
     }
@@ -71,7 +77,7 @@ export function ArtifactPanel({
 
   const preparedHtml = useMemo(() => {
     if (artifact.type !== 'html' && artifact.language !== 'html') return '';
-    let html = artifact.content.trim();
+    let html = content.trim();
     // Wrap snippets in standard boilerplate if missing html tags
     if (!html.toLowerCase().includes('<html') && !html.toLowerCase().includes('<!doctype')) {
       html = `<!DOCTYPE html>
@@ -91,7 +97,7 @@ export function ArtifactPanel({
 </html>`;
     }
     return html;
-  }, [artifact.content, artifact.language, artifact.title, artifact.type]);
+  }, [content, artifact.language, artifact.title, artifact.type]);
 
   return (
     <aside className="artifact-panel" aria-label="Artifact Workspace">
@@ -103,6 +109,7 @@ export function ArtifactPanel({
           <div className="artifact-info">
             <h3 className="artifact-title" title={artifact.title}>{artifact.title}</h3>
             <span className="artifact-badge">{artifact.language.toUpperCase()}</span>
+            {isModified && <span className="artifact-modified-badge">Edited</span>}
           </div>
         </div>
 
@@ -119,9 +126,9 @@ export function ArtifactPanel({
               <button
                 className={`artifact-tab ${tab === 'code' ? 'active' : ''}`}
                 onClick={() => setTab('code')}
-                title="View Source Code"
+                title="View / Edit Source Code"
               >
-                Code
+                {isEditing ? 'Editing' : 'Code'}
               </button>
             </div>
           )}
@@ -156,16 +163,63 @@ export function ArtifactPanel({
           ) : artifact.type === 'svg' ? (
             <div
               className="artifact-svg-container"
-              dangerouslySetInnerHTML={{ __html: artifact.content }}
+              dangerouslySetInnerHTML={{ __html: content }}
             />
           ) : (
             <div className="artifact-code-view">
-              <SyntaxCode text={artifact.content} language={artifact.language} lineNumbers />
+              <SyntaxCode text={content} language={artifact.language} lineNumbers />
             </div>
           )
         ) : (
-          <div className="artifact-code-view">
-            <SyntaxCode text={artifact.content} language={artifact.language} lineNumbers />
+          <div className="artifact-editor-container">
+            <div className="artifact-editor-toolbar">
+              <span className="artifact-editor-status">
+                {isEditing ? '✏️ Edit mode' : '👀 Syntax highlighted'}
+              </span>
+              <div className="artifact-editor-btns">
+                <button
+                  type="button"
+                  className={`editor-toggle-btn ${isEditing ? 'active' : ''}`}
+                  onClick={() => setIsEditing(!isEditing)}
+                >
+                  {isEditing ? 'View Highlighted' : '✏️ Co-Edit Code'}
+                </button>
+                {isEditing && (
+                  <button
+                    type="button"
+                    className="editor-apply-btn"
+                    onClick={() => setTab('preview')}
+                    title="Run changes in preview"
+                  >
+                    ▶ Run & Preview
+                  </button>
+                )}
+                {isModified && (
+                  <button
+                    type="button"
+                    className="editor-reset-btn"
+                    onClick={() => { setContent(artifact.content); setIsEditing(false); }}
+                    title="Reset to Naru's original code"
+                  >
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {isEditing ? (
+              <textarea
+                className="artifact-code-textarea"
+                value={content}
+                onChange={e => setContent(e.target.value)}
+                placeholder="Edit code directly here..."
+                spellCheck={false}
+              />
+            ) : (
+              <div className="artifact-code-view">
+                <SyntaxCode text={content} language={artifact.language} lineNumbers />
+              </div>
+            )}
           </div>
         )}
       </div>
