@@ -170,9 +170,17 @@ export function createHandler({ pool, provider = providerFromEnv(), dist = null,
       // 3. Try Pollinations with browser headers to prevent datacenter blocking
       let failureReason = '';
       if (!dataUrl) {
-        const apiUrl = pollKey
-          ? `https://gen.pollinations.ai/image/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}&key=${encodeURIComponent(pollKey)}`
-          : `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?nologo=true&seed=${seed}`;
+        const candidateUrls = [];
+        if (pollKey) {
+          candidateUrls.push(
+            `https://gen.pollinations.ai/image/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}&key=${encodeURIComponent(pollKey)}`,
+            `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?nologo=true&seed=${seed}&key=${encodeURIComponent(pollKey)}`
+          );
+        } else {
+          candidateUrls.push(
+            `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?nologo=true&seed=${seed}`
+          );
+        }
 
         const reqHeaders = {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
@@ -181,26 +189,29 @@ export function createHandler({ pool, provider = providerFromEnv(), dist = null,
         };
         if (pollKey) reqHeaders['Authorization'] = `Bearer ${pollKey}`;
 
-        try {
-          const fetchRes = await fetch(apiUrl, { headers: reqHeaders, signal: AbortSignal.timeout(25000) });
-          const contentType = fetchRes.headers.get('content-type') || '';
+        for (const apiUrl of candidateUrls) {
+          try {
+            const fetchRes = await fetch(apiUrl, { headers: reqHeaders, signal: AbortSignal.timeout(20000) });
+            const contentType = fetchRes.headers.get('content-type') || '';
 
-          if (fetchRes.ok && contentType.includes('image')) {
-            const arrayBuf = await fetchRes.arrayBuffer();
-            const base64Data = Buffer.from(arrayBuf).toString('base64');
-            dataUrl = `data:${contentType.split(';')[0]};base64,${base64Data}`;
-            providerUsed = 'Pollinations AI';
-          } else {
-            const errBody = await fetchRes.text().catch(() => '');
-            try {
-              const parsed = JSON.parse(errBody);
-              if (parsed?.error?.message) failureReason = parsed.error.message;
-            } catch {
-              failureReason = errBody.slice(0, 160);
+            if (fetchRes.ok && contentType.includes('image')) {
+              const arrayBuf = await fetchRes.arrayBuffer();
+              const base64Data = Buffer.from(arrayBuf).toString('base64');
+              dataUrl = `data:${contentType.split(';')[0]};base64,${base64Data}`;
+              providerUsed = 'Pollinations AI';
+              break;
+            } else {
+              const errBody = await fetchRes.text().catch(() => '');
+              try {
+                const parsed = JSON.parse(errBody);
+                if (parsed?.error?.message) failureReason = parsed.error.message;
+              } catch {
+                failureReason = errBody.slice(0, 160);
+              }
             }
+          } catch (err) {
+            failureReason = err?.message || 'Connection timed out';
           }
-        } catch (err) {
-          failureReason = err?.message || 'Connection timed out';
         }
       }
 
