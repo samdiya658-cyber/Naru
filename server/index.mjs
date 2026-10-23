@@ -4,15 +4,15 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-// Automatically load .env if present
-try { process.loadEnvFile?.(); } catch {}
-try { process.loadEnvFile?.(path.join(path.dirname(fileURLToPath(import.meta.url)), '../.env')); } catch {}
-try { process.loadEnvFile?.(path.join(path.dirname(fileURLToPath(import.meta.url)), '.env')); } catch {}
-import { createRequire } from 'node:module';
+if (!process.env.VERCEL) {
+  try { process.loadEnvFile?.(); } catch {}
+  try { process.loadEnvFile?.(path.join(path.dirname(fileURLToPath(import.meta.url)), '../.env')); } catch {}
+  try { process.loadEnvFile?.(path.join(path.dirname(fileURLToPath(import.meta.url)), '.env')); } catch {}
+}
 import pg from 'pg';
 import { hashPassword, verifyPassword, newToken, tokenHash, parseCookies } from './auth.mjs';
 import { providerFromEnv } from './providers.mjs';
-const { chunkText, answerLongInput, writeLongAnswer } = createRequire(import.meta.url)('./longtext.cjs');
+import { chunkText, answerLongInput, writeLongAnswer } from './longtext.mjs';
 
 const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.resolve('uploads');
 try { if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true }); } catch {}

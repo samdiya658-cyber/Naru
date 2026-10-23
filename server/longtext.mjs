@@ -1,10 +1,10 @@
 // Long prompts and long answers, done in batches. Works with any provider that has: complete({system, messages, maxTokens}) -> Promise<string>.
 // Small local models have short context (2k-8k tokens) and are slow on CPU, so we never send or ask for everything at once.
-'use strict';
-const approxTokens = s => Math.ceil(s.length / 4);               // rough: ~4 chars per token (good enough for budgeting)
+
+export const approxTokens = s => Math.ceil(s.length / 4); // rough: ~4 chars per token (good enough for budgeting)
 
 // Split text into chunks of about `maxTokens`, breaking on paragraph, then sentence boundaries, with a small overlap.
-function chunkText(text, maxTokens = 1500, overlapTokens = 100) {
+export function chunkText(text, maxTokens = 1500, overlapTokens = 100) {
   const max = maxTokens * 4, ov = overlapTokens * 4, out = [];
   const parts = text.split(/\n{2,}/).flatMap(p => p.length <= max ? [p] : p.match(/[^.!?\n]+[.!?]*\s*/g) || [p]).flatMap(p => p.length <= max ? [p] : p.match(new RegExp('.{1,' + max + '}', 'gs')));
   let cur = '';
@@ -18,7 +18,7 @@ function chunkText(text, maxTokens = 1500, overlapTokens = 100) {
 
 // LONG PROMPT: map each chunk to notes relevant to the question, then reduce the notes into one answer.
 // Batches: `onProgress` is called after every batch so the UI can show "part 3 of 9" and the job can resume.
-async function answerLongInput(provider, { question, document, chunkTokens = 1500, notesTokens = 250, finalTokens = 700, onProgress, signal }) {
+export async function answerLongInput(provider, { question, document, chunkTokens = 1500, notesTokens = 250, finalTokens = 700, onProgress, signal }) {
   const chunks = chunkText(document, chunkTokens), notes = [];
   for (let i = 0; i < chunks.length; i++) {
     if (signal && signal.aborted) throw new Error('aborted');
@@ -41,7 +41,7 @@ async function answerLongInput(provider, { question, document, chunkTokens = 150
 }
 
 // LONG ANSWER: first an outline, then one section per batch. Each batch sees the outline and a short recap, never the whole text so far.
-async function writeLongAnswer(provider, { request, sections = 6, sectionTokens = 500, onSection, onProgress, signal, resume = [] }) {
+export async function writeLongAnswer(provider, { request, sections = 6, sectionTokens = 500, onSection, onProgress, signal, resume = [] }) {
   const outlineRaw = await provider.complete({ system: 'Produce a numbered outline of exactly ' + sections + ' short section titles for the request. Titles only, one per line.', messages: [{ role: 'user', content: request }], maxTokens: 150 });
   const titles = outlineRaw.split('\n').map(l => l.replace(/^\s*\d+[.)]\s*/, '').trim()).filter(Boolean).slice(0, sections);
   const done = resume.slice(), outline = titles.map((t, i) => (i + 1) + '. ' + t).join('\n');
@@ -57,5 +57,3 @@ async function writeLongAnswer(provider, { request, sections = 6, sectionTokens 
   }
   return { titles, sections: done, text: titles.map((t, i) => done[i] ? '## ' + t + '\n\n' + done[i] : '').filter(Boolean).join('\n\n'), complete: done.length === titles.length };
 }
-
-module.exports = { approxTokens, chunkText, answerLongInput, writeLongAnswer };
