@@ -234,7 +234,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const dbUrl = process.env.DATABASE_URL || 'postgres://naru:change-me-long-random@127.0.0.1:5432/naru';
   const embedded = await ensurePostgres(dbUrl);
   const a = process.argv.indexOf('--dist'), dist = a > 0 ? path.resolve(process.argv[a + 1]) : null;
-  const pool = new pg.Pool({ connectionString: dbUrl });
+  const isCloudPg = dbUrl.includes('supabase.co') || dbUrl.includes('pooler.supabase.com') || dbUrl.includes('neon.tech');
+  const pool = new pg.Pool({
+    connectionString: dbUrl,
+    ssl: isCloudPg ? { rejectUnauthorized: false } : undefined
+  });
   const { resolveProvider } = await import('./providers.mjs');
   const provider = await resolveProvider();
   const port = Number(process.env.PORT || 3000);

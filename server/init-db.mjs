@@ -39,38 +39,44 @@ export async function ensurePostgres(dbUrl = 'postgres://naru:change-me-long-ran
     console.log('Embedded PostgreSQL started.');
   }
 
-  // Ensure 'naru' database exists with UTF-8 encoding
-  const adminClient = new pg.Client({
-    connectionString: dbUrl.replace(/\/[^/?]+(\?.*)?$/, '/postgres$1'),
-  });
-  try {
-    await adminClient.connect();
-    const r = await adminClient.query("select pg_encoding_to_char(encoding) as enc from pg_database where datname = 'naru'");
-    if (r.rows.length === 0) {
-      console.log("Database 'naru' does not exist. Creating with UTF-8 encoding...");
-      try {
-        await adminClient.query("create database naru with encoding 'UTF8' template template0");
-      } catch {
-        await adminClient.query("create database naru");
+  // For local embedded postgres, ensure 'naru' database exists with UTF-8 encoding
+  if (embedded) {
+    const adminClient = new pg.Client({
+      connectionString: dbUrl.replace(/\/[^/?]+(\?.*)?$/, '/postgres$1'),
+    });
+    try {
+      await adminClient.connect();
+      const r = await adminClient.query("select pg_encoding_to_char(encoding) as enc from pg_database where datname = 'naru'");
+      if (r.rows.length === 0) {
+        console.log("Database 'naru' does not exist. Creating with UTF-8 encoding...");
+        try {
+          await adminClient.query("create database naru with encoding 'UTF8' template template0");
+        } catch {
+          await adminClient.query("create database naru");
+        }
+      } else if (r.rows[0].enc !== 'UTF8') {
+        console.log(`Database 'naru' has encoding ${r.rows[0].enc}. Upgrading to UTF8 for full emoji support...`);
+        try {
+          await adminClient.query("drop database naru with (force)");
+          await adminClient.query("create database naru with encoding 'UTF8' template template0");
+          console.log("Database 'naru' recreated with UTF-8 encoding.");
+        } catch (err) {
+          console.warn('Encoding upgrade notice:', err.message);
+        }
       }
-    } else if (r.rows[0].enc !== 'UTF8') {
-      console.log(`Database 'naru' has encoding ${r.rows[0].enc}. Upgrading to UTF8 for full emoji support...`);
-      try {
-        await adminClient.query("drop database naru with (force)");
-        await adminClient.query("create database naru with encoding 'UTF8' template template0");
-        console.log("Database 'naru' recreated with UTF-8 encoding.");
-      } catch (err) {
-        console.warn('Encoding upgrade notice:', err.message);
-      }
+    } catch (e) {
+      console.warn('Admin db check warning:', e.message);
+    } finally {
+      await adminClient.end().catch(() => {});
     }
-  } catch (e) {
-    console.warn('Admin db check warning:', e.message);
-  } finally {
-    await adminClient.end().catch(() => {});
   }
 
   // Connect to target database and check if tables exist; if not, run schema.sql
-  const appClient = new pg.Client({ connectionString: dbUrl });
+  const isCloudPg = dbUrl.includes('supabase.co') || dbUrl.includes('pooler.supabase.com') || dbUrl.includes('neon.tech');
+  const appClient = new pg.Client({
+    connectionString: dbUrl,
+    ssl: isCloudPg ? { rejectUnauthorized: false } : undefined
+  });
   await appClient.connect();
   const tables = await appClient.query("select tablename from pg_tables where schemaname = 'public'");
   if (tables.rows.length === 0) {
