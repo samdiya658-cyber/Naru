@@ -17,7 +17,9 @@ import { chunkText, answerLongInput, writeLongAnswer } from './longtext.mjs';
 const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.resolve('uploads');
 try { if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true }); } catch {}
 
-const SYSTEM = 'You are Naru, a helpful, honest and friendly AI assistant. Be clear and concise, say when you are unsure, and never claim to be another company\'s model.';
+const SYSTEM = `You are Naru, an intelligent AI coworker. You think carefully, solve complex tasks on behalf of the user, write robust code, build interactive web applications, create vector graphics, and produce high-quality deliverables.
+When asked to create interactive apps, games, tools, components, SVG graphics, or comprehensive documents, provide them in a clean code block with the language and title (for example: \`\`\`html title="Interactive App" or \`\`\`svg title="Vector Graphic") so they automatically render in the interactive artifact workspace.
+Always ensure HTML apps are self-contained with styles and scripts included so they work seamlessly in the live preview.`;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 const LONG_ANSWER_RE = /\b(\d{3,5}[- ]?words?|essay|full report|detailed (guide|article|report)|step[- ]by[- ]step guide|long answer)\b/i;
 

@@ -54,11 +54,12 @@ function inline(text: string, onOpenLink?: (url: string) => void, onImageClick?:
             : <Fragment key={p}>{inlineMarks(part.text, onOpenLink, onImageClick)}</Fragment>)}</Fragment>;
     });
 }
-export function Markdown({ text, onOpenLink, onPreviewHtml, onImageClick }: {
+export function Markdown({ text, onOpenLink, onPreviewHtml, onImageClick, onOpenArtifact }: {
     text: string;
     onOpenLink?: (url: string) => void;
     onPreviewHtml?: (html: string) => void;
     onImageClick?: (url: string) => void;
+    onOpenArtifact?: (artifact: { title: string; language: string; content: string }) => void;
 }) {
     const nodes: ReactNode[] = [];
     const lines = text.split('\n');
@@ -69,13 +70,37 @@ export function Markdown({ text, onOpenLink, onPreviewHtml, onImageClick }: {
             continue;
         }
         if (/^\s*```/.test(line)) {
-            const language = line.trim().slice(3);
+            const rawLang = line.trim().slice(3).trim();
+            const language = rawLang.split(/\s+/)[0] || '';
+            const title = rawLang.slice(language.length).trim();
             const body: string[] = [];
             const key = i++;
             while (i < lines.length && !/^\s*```/.test(lines[i]))
                 body.push(lines[i++]);
             i++;
-            nodes.push(<div className="st-code" key={key}><div className="st-code__head"><span>{language || tr('code')}</span>{tr(/^html$/i.test(language) && onPreviewHtml ? <Btn size="sm" onClick={() => onPreviewHtml(body.join('\n'))}>{tr("Open preview")}</Btn> : null)}<IconBtn name="copy" title={tr("Copy code")} onClick={() => void navigator.clipboard.writeText(body.join('\n'))}/></div><SyntaxCode text={body.join('\n')} language={language}/></div>);
+            const content = body.join('\n');
+            const canPreview = /^(html|htm|svg|javascript|js|jsx|tsx|css|markdown|md)$/i.test(language) || content.length > 80;
+            nodes.push(
+              <div className="st-code" key={key}>
+                <div className="st-code__head">
+                  <span className="st-code__lang">{title || language || tr('code')}</span>
+                  <div className="st-code__actions">
+                    {onOpenArtifact && canPreview && (
+                      <button
+                        type="button"
+                        className="btn-open-artifact"
+                        onClick={() => onOpenArtifact({ title: title || `${language.toUpperCase()} Artifact`, language: language || 'html', content })}
+                        title="Open in interactive workspace"
+                      >
+                        ⚡ Open Artifact
+                      </button>
+                    )}
+                    <IconBtn name="copy" title={tr("Copy code")} onClick={() => void navigator.clipboard.writeText(content)}/>
+                  </div>
+                </div>
+                <SyntaxCode text={content} language={language}/>
+              </div>
+            );
             continue;
         }
         const block = displayBlock(lines, i);
