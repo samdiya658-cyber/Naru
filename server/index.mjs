@@ -121,8 +121,22 @@ export function createHandler({ pool, provider = providerFromEnv(), dist = null,
 
       if (!promptText) promptText = cleanText || text || 'a creative digital artwork';
       const seed = Math.floor(Math.random() * 10000000);
-      const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux`;
-      const outText = `Here is your generated image for **${promptText}**:\n\n![${promptText.replace(/[[\]]/g, '')}](${imgUrl})\n\n*(Generated with Flux model via Pollinations.ai)*`;
+      const pollKey = (process.env.POLLINATIONS_API_KEY || process.env.POLLEN_API_KEY || '').trim();
+      const imgUrl = pollKey
+        ? `https://gen.pollinations.ai/image/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}&key=${encodeURIComponent(pollKey)}`
+        : `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}`;
+
+      let outText = `Here is your generated image for **${promptText}**:\n\n![${promptText.replace(/[[\]]/g, '')}](${imgUrl})\n\n*(Generated via Pollinations.ai)*`;
+
+      // Check if the free tier rate limit was triggered
+      try {
+        const checkRes = await fetch(imgUrl, { signal: AbortSignal.timeout(6000) });
+        if (checkRes.status === 402 || checkRes.status === 429) {
+          const errData = await checkRes.json().catch(() => null);
+          const msg = errData?.error?.message || 'Free tier cooldown: 1 image every 45 seconds.';
+          outText = `⚠️ **Image Service Cooldown**\n\n${msg}\n\n- ⏳ **Please wait ~30 seconds** and ask again.\n- 🔑 **For instant, unlimited generation**: Get a free API key at [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys) and set \`POLLINATIONS_API_KEY\` in your Vercel Environment Variables.`;
+        }
+      } catch {}
 
       ev({ type: 'delta', text: outText });
       await pool.query('update messages set content = $1, status = $2, stop_reason = $3 where id = $4', [JSON.stringify([{ type: 'text', text: outText }]), 'complete', 'end', am]).catch(e => console.error(e.message));
