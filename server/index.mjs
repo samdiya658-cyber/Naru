@@ -25,7 +25,8 @@ When working on multi-step tasks or building apps, you can outline your executio
 [ ] Step 3 next
 </coworkPlan>
 When creating interactive apps, games, tools, components, SVG graphics, or comprehensive documents, provide them in a clean code block with the language and title (for example: \`\`\`html title="Interactive App" or \`\`\`svg title="Vector Graphic") so they automatically render in the interactive artifact workspace.
-Always ensure HTML apps are self-contained with styles and scripts included so they work seamlessly in the live preview.`;
+Always ensure HTML apps are self-contained with styles and scripts included so they work seamlessly in the live preview.
+Do NOT output HTML or JavaScript canvas scripts when asked for images or photos; image generation is handled directly.`;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 const LONG_ANSWER_RE = /\b(\d{3,5}[- ]?words?|essay|full report|detailed (guide|article|report)|step[- ]by[- ]step guide|long answer)\b/i;
 
@@ -98,10 +99,27 @@ export function createHandler({ pool, provider = providerFromEnv(), dist = null,
     ev({ type: 'start', conversationId: cid, messageId: am, userMessageId: um });
 
     // Handle Image Generation requests
-    const isImageGen = body.mode === 'image' || /^\s*(\/image|\/imagine)\b/i.test(text) || /^\s*(generate|create|draw|paint|render)\s+(an?\s+)?image\s+(of\s+)?/i.test(text);
+    const cleanText = text.replace(/^[\p{Emoji}\s]+/u, '').trim();
+    const isExplicitCodeRequest = /\b(svg|vector code|html canvas|canvas code|source code)\b/i.test(text) && !/(\/image|\/imagine)/i.test(text);
+    const isImageGen = !isExplicitCodeRequest && (
+      body.mode === 'image'
+      || /^\s*(\/image|\/imagine)\b/i.test(text)
+      || /^\s*(\/image|\/imagine)\b/i.test(cleanText)
+      || /\b(\/image|\/imagine)\b/i.test(text)
+      || /\b(generate|create|draw|paint|render|make|show me)\s+(an?\s+)?(image|picture|photo|artwork)\b/i.test(text)
+      || /\b(generate|create|draw|paint|render|make|show me)\s+(an?\s+)?(image|picture|photo|artwork)\b/i.test(cleanText)
+    );
+
     if (isImageGen) {
-      let promptText = text.replace(/^\s*(\/image|\/imagine)\s*/i, '').replace(/^\s*(generate|create|draw|paint|render)\s+(an?\s+)?image\s+(of\s+)?/i, '').trim();
-      if (!promptText) promptText = text || 'a creative digital artwork';
+      let promptText = text
+        .replace(/^[\p{Emoji}\s]+/u, '') // remove leading emojis (e.g. 🎨)
+        .replace(/^(\/image|\/imagine)\s*/i, '') // remove /image or /imagine
+        .replace(/\b(\/image|\/imagine)\s*/i, '')
+        .replace(/^.*?\b(generate|create|draw|paint|render|make|show me)\s+(an?\s+)?(image|picture|photo|artwork)\s+(of\s+)?/i, '')
+        .replace(/^(an?|the)\s+/i, '')
+        .trim();
+
+      if (!promptText) promptText = cleanText || text || 'a creative digital artwork';
       const seed = Math.floor(Math.random() * 10000000);
       const imgUrl = `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}&model=flux`;
       const outText = `Here is your generated image for **${promptText}**:\n\n![${promptText.replace(/[[\]]/g, '')}](${imgUrl})\n\n*(Generated with Flux model via Pollinations.ai)*`;

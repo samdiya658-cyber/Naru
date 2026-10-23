@@ -106,12 +106,20 @@ function Chat({ me, onLogout }: { me: NonNullable<Me>; onLogout: () => void }) {
     const uid = 'u' + Date.now(), aid = 'a' + Date.now();
     setMsgs(m => [...m, { id: uid, role: 'user', text: t, attachments: currAttachments }, { id: aid, role: 'assistant', text: '', status: 'streaming' }]);
     ac.current = new AbortController(); let newId = cid;
+
+    const isImageReq = imageMode
+      || /^\s*(🎨\s*)?(\/image|\/imagine)\b/i.test(t)
+      || /\b(\/image|\/imagine)\b/i.test(t)
+      || /\b(generate|create|draw|paint|render|make)\s+(an?\s+)?(image|picture|photo)\b/i.test(t);
+
+    if (imageMode) setImageMode(false);
+
     try {
       const r = await chat({
         conversationId: cid ?? undefined,
         text: t,
         attachments: currAttachments,
-        mode: imageMode ? 'image' : undefined,
+        mode: isImageReq ? 'image' : undefined,
         long: long ? 'answer' : undefined,
       }, e => {
         if (e.type === 'start') { newId = e.conversationId; setCid(e.conversationId); }
