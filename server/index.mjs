@@ -122,33 +122,93 @@ export function createHandler({ pool, provider = providerFromEnv(), dist = null,
       if (!promptText) promptText = cleanText || text || 'a creative digital artwork';
       const seed = Math.floor(Math.random() * 10000000);
       const pollKey = (process.env.POLLINATIONS_API_KEY || process.env.POLLEN_API_KEY || '').trim();
-      const apiUrl = pollKey
-        ? `https://gen.pollinations.ai/image/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}&key=${encodeURIComponent(pollKey)}`
-        : `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?nologo=true&seed=${seed}`;
+      const hfToken = (process.env.HF_TOKEN || process.env.HUGGINGFACE_API_KEY || '').trim();
+      const openAiKey = (process.env.OPENAI_API_KEY || '').trim();
 
       ev({ type: 'delta', text: '🎨 Generating image with AI, please wait a moment...\n\n' });
 
-      let outText = '';
-      try {
-        const fetchRes = await fetch(apiUrl, { signal: AbortSignal.timeout(20000) });
-        const contentType = fetchRes.headers.get('content-type') || '';
+      let dataUrl = '';
+      let providerUsed = 'Pollinations AI';
 
-        if (fetchRes.ok && contentType.includes('image')) {
-          const arrayBuf = await fetchRes.arrayBuffer();
-          const base64Data = Buffer.from(arrayBuf).toString('base64');
-          const dataUrl = `data:${contentType.split(';')[0]};base64,${base64Data}`;
-          outText = `Here is your generated image for **${promptText}**:\n\n![${promptText.replace(/[[\]]/g, '')}](${dataUrl})\n\n*(Generated via Pollinations AI)*`;
-        } else {
-          const errBody = await fetchRes.text().catch(() => '');
-          let msg = 'The free image cluster is currently in a 45-second cooldown per IP.';
-          try {
-            const parsed = JSON.parse(errBody);
-            if (parsed?.error?.message) msg = parsed.error.message;
-          } catch {}
-          outText = `⚠️ **Image Generation Notice**\n\n${msg}\n\n- ⏳ Please wait ~30 seconds and try again.\n- 🔑 **For unlimited instant generation**: Get a free API key at [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys) and add \`POLLINATIONS_API_KEY\` to your Vercel Environment Variables.`;
+      // 1. Try OpenAI DALL-E 3 if OPENAI_API_KEY is available (and not Groq gsk_)
+      if (openAiKey && !openAiKey.startsWith('gsk_')) {
+        try {
+          const dRes = await fetch('https://api.openai.com/v1/images/generations', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: 'Bearer ' + openAiKey },
+            body: JSON.stringify({ prompt: promptText, n: 1, size: '1024x1024', response_format: 'b64_json' }),
+            signal: AbortSignal.timeout(25000)
+          });
+          if (dRes.ok) {
+            const dData = await dRes.json();
+            if (dData.data?.[0]?.b64_json) {
+              dataUrl = `data:image/png;base64,${dData.data[0].b64_json}`;
+              providerUsed = 'OpenAI DALL-E 3';
+            }
+          }
+        } catch {}
+      }
+
+      // 2. Try Hugging Face FLUX.1-schnell if HF_TOKEN is available
+      if (!dataUrl && hfToken) {
+        try {
+          const hfRes = await fetch('https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell', {
+            method: 'POST',
+            headers: { authorization: 'Bearer ' + hfToken, 'content-type': 'application/json' },
+            body: JSON.stringify({ inputs: promptText }),
+            signal: AbortSignal.timeout(25000)
+          });
+          if (hfRes.ok) {
+            const hfBuf = await hfRes.arrayBuffer();
+            const hfB64 = Buffer.from(hfBuf).toString('base64');
+            dataUrl = `data:image/jpeg;base64,${hfB64}`;
+            providerUsed = 'FLUX.1 via Hugging Face';
+          }
+        } catch {}
+      }
+
+      // 3. Try Pollinations with browser headers to prevent datacenter blocking
+      let failureReason = '';
+      if (!dataUrl) {
+        const apiUrl = pollKey
+          ? `https://gen.pollinations.ai/image/${encodeURIComponent(promptText)}?width=1024&height=1024&nologo=true&seed=${seed}&key=${encodeURIComponent(pollKey)}`
+          : `https://image.pollinations.ai/prompt/${encodeURIComponent(promptText)}?nologo=true&seed=${seed}`;
+
+        const reqHeaders = {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+          'Referer': 'https://pollinations.ai/',
+          'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+        };
+        if (pollKey) reqHeaders['Authorization'] = `Bearer ${pollKey}`;
+
+        try {
+          const fetchRes = await fetch(apiUrl, { headers: reqHeaders, signal: AbortSignal.timeout(25000) });
+          const contentType = fetchRes.headers.get('content-type') || '';
+
+          if (fetchRes.ok && contentType.includes('image')) {
+            const arrayBuf = await fetchRes.arrayBuffer();
+            const base64Data = Buffer.from(arrayBuf).toString('base64');
+            dataUrl = `data:${contentType.split(';')[0]};base64,${base64Data}`;
+            providerUsed = 'Pollinations AI';
+          } else {
+            const errBody = await fetchRes.text().catch(() => '');
+            try {
+              const parsed = JSON.parse(errBody);
+              if (parsed?.error?.message) failureReason = parsed.error.message;
+            } catch {
+              failureReason = errBody.slice(0, 160);
+            }
+          }
+        } catch (err) {
+          failureReason = err?.message || 'Connection timed out';
         }
-      } catch (err) {
-        outText = `⚠️ **Image Generation Notice**\n\nThe image provider took too long to respond. Please try again with a slightly simpler prompt, or add a free \`POLLINATIONS_API_KEY\` from [enter.pollinations.ai/keys](https://enter.pollinations.ai/keys) to bypass limits.`;
+      }
+
+      let outText = '';
+      if (dataUrl) {
+        outText = `Here is your generated image for **${promptText}**:\n\n![${promptText.replace(/[[\]]/g, '')}](${dataUrl})\n\n*(Generated with ${providerUsed})*`;
+      } else {
+        outText = `⚠️ **Image Generation Notice**\n\n${failureReason || 'The free generation service is temporarily on cooldown.'}\n\n### How to enable unlimited generation:\n1. Open **[https://enter.pollinations.ai/keys](https://enter.pollinations.ai/keys)** in your browser.\n2. Click **Sign in** (via GitHub or Google) and copy your free key.\n3. Add it to your **Vercel Project Settings ➔ Environment Variables**:\n   - **Name**: \`POLLINATIONS_API_KEY\`\n   - **Value**: \`your_copied_key\`\n*(You can also use a free \`HF_TOKEN\` from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) or an \`OPENAI_API_KEY\`)*`;
       }
 
       ev({ type: 'delta', text: outText, replace: true });
