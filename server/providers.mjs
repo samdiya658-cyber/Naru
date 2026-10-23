@@ -31,7 +31,11 @@ export function openaiProvider({ baseUrl, apiKey = 'none', model = 'naru', fetch
   return {
     name: 'openai',
     async complete({ system, messages, maxTokens = 512, signal }) {
-      const r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, false), signal });
+      let r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, false), signal });
+      if (r.status === 404 && cleanModel !== 'llama-3.3-70b-versatile' && url.includes('groq.com')) {
+        console.warn(`Model ${cleanModel} not found on Groq, falling back to llama-3.3-70b-versatile...`);
+        r = await fetchImpl(url, { method: 'POST', headers, body: JSON.stringify({ model: 'llama-3.3-70b-versatile', stream: false, max_tokens: maxTokens, messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages] }), signal });
+      }
       if (!r.ok) {
         let details = '';
         try { const j = await r.json(); details = j.error?.message || JSON.stringify(j); } catch { details = await r.text().catch(() => ''); }
@@ -40,7 +44,11 @@ export function openaiProvider({ baseUrl, apiKey = 'none', model = 'naru', fetch
       return (await r.json()).choices?.[0]?.message?.content ?? '';
     },
     async *stream({ system, messages, maxTokens = 1024, signal }) {
-      const r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, true), signal });
+      let r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, true), signal });
+      if (r.status === 404 && cleanModel !== 'llama-3.3-70b-versatile' && url.includes('groq.com')) {
+        console.warn(`Model ${cleanModel} not found on Groq, falling back to llama-3.3-70b-versatile...`);
+        r = await fetchImpl(url, { method: 'POST', headers, body: JSON.stringify({ model: 'llama-3.3-70b-versatile', stream: true, max_tokens: maxTokens, messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages] }), signal });
+      }
       if (!r.ok || !r.body) {
         let details = '';
         try { const j = await r.json(); details = j.error?.message || JSON.stringify(j); } catch { details = await r.text().catch(() => ''); }
