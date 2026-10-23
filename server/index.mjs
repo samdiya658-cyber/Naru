@@ -14,19 +14,25 @@ import { hashPassword, verifyPassword, newToken, tokenHash, parseCookies } from 
 import { providerFromEnv } from './providers.mjs';
 const { chunkText, answerLongInput, writeLongAnswer } = createRequire(import.meta.url)('./longtext.cjs');
 
-const uploadsDir = path.resolve('uploads');
-if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+const uploadsDir = process.env.VERCEL ? path.join('/tmp', 'uploads') : path.resolve('uploads');
+try { if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true }); } catch {}
 
 const SYSTEM = 'You are Naru, a helpful, honest and friendly AI assistant. Be clear and concise, say when you are unsure, and never claim to be another company\'s model.';
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif', '.json': 'application/json', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf' };
 const LONG_ANSWER_RE = /\b(\d{3,5}[- ]?words?|essay|full report|detailed (guide|article|report)|step[- ]by[- ]step guide|long answer)\b/i;
 
-export function createApp({ pool, provider = providerFromEnv(), dist = null, opts = {} }) {
+export function createHandler({ pool, provider = providerFromEnv(), dist = null, opts = {} }) {
   const o = { longInputChars: 12000, maxText: 200000, dailyLimit: 200, rate: 30, secure: false, historyChars: 24000, ...opts };
   const hits = new Map();
   const limited = uid => { const now = Date.now(), a = (hits.get(uid) ?? []).filter(t => now - t < 60000); a.push(now); hits.set(uid, a); return a.length > o.rate; };
   const send = (res, code, obj, headers = {}) => { res.writeHead(code, { 'content-type': 'application/json', 'cache-control': 'no-store', ...headers }); res.end(JSON.stringify(obj)); };
-  const readJson = (req, max = 1_000_000) => new Promise((ok, no) => { let b = ''; req.on('data', c => { b += c; if (b.length > max) { no(new Error('too big')); req.destroy(); } }); req.on('end', () => { try { ok(b ? JSON.parse(b) : {}); } catch { no(new Error('bad json')); } }); });
+  const readJson = (req, max = 1_000_000) => new Promise((ok, no) => {
+    if (req.body && typeof req.body === 'object') return ok(req.body);
+    if (typeof req.body === 'string') {
+      try { return ok(JSON.parse(req.body)); } catch { return no(new Error('bad json')); }
+    }
+    let b = ''; req.on('data', c => { b += c; if (b.length > max) { no(new Error('too big')); req.destroy(); } }); req.on('end', () => { try { ok(b ? JSON.parse(b) : {}); } catch { no(new Error('bad json')); } });
+  });
   const cookie = (t, max) => 'naru_session=' + t + '; HttpOnly; SameSite=Lax; Path=/; Max-Age=' + max + (o.secure ? '; Secure' : '');
   async function userOf(req) {
     const t = parseCookies(req.headers.cookie).naru_session; if (!t) return null;
@@ -156,7 +162,7 @@ export function createApp({ pool, provider = providerFromEnv(), dist = null, opt
     fs.createReadStream(f).pipe(res);
   };
 
-  return http.createServer(async (req, res) => {
+  return async (req, res) => {
     try {
       const url = new URL(req.url, 'http://x'), p = url.pathname, m = req.method;
       if (!p.startsWith('/api/')) return serveStatic(req, res);
@@ -224,7 +230,11 @@ export function createApp({ pool, provider = providerFromEnv(), dist = null, opt
       }
       send(res, 404, { error: 'Not found.' });
     } catch (e) { console.error(e); if (!res.headersSent) send(res, e.message === 'bad json' ? 400 : 500, { error: e.message === 'bad json' ? 'Bad request.' : 'Something went wrong.' }); else res.end(); }
-  });
+  };
+}
+
+export function createApp(args) {
+  return http.createServer(createHandler(args));
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
