@@ -23,18 +23,37 @@ export function mockProvider({ delay = 0 } = {}) {
 
 export function openaiProvider({ baseUrl, apiKey = 'none', model = 'naru', fetchImpl = fetch }) {
   const cleanKey = String(apiKey ?? '').trim().replace(/^["']|["']$/g, '');
-  const cleanBase = String(baseUrl ?? '').trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '');
+  let cleanBase = String(baseUrl ?? '').trim().replace(/^["']|["']$/g, '').replace(/\/+$/, '');
+  if (cleanKey.startsWith('gsk_')) {
+    cleanBase = 'https://api.groq.com/openai/v1';
+  }
   const cleanModel = String(model ?? 'naru').trim().replace(/^["']|["']$/g, '');
   const url = cleanBase + '/chat/completions';
-  const body = (system, messages, maxTokens, stream) => JSON.stringify({ model: cleanModel, stream, max_tokens: maxTokens, messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages] });
+  const body = (system, messages, maxTokens, stream, chosenModel = cleanModel) => JSON.stringify({ model: chosenModel, stream, max_tokens: maxTokens, messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages] });
   const headers = { 'content-type': 'application/json', authorization: 'Bearer ' + cleanKey };
+
+  async function getAvailableModel() {
+    if (!cleanKey.startsWith('gsk_')) return null;
+    try {
+      const mRes = await fetchImpl('https://api.groq.com/openai/v1/models', { headers: { authorization: 'Bearer ' + cleanKey } });
+      if (mRes.ok) {
+        const mData = await mRes.json();
+        const ids = (mData.data || []).map(x => x.id).filter(id => !id.includes('whisper') && !id.includes('guard'));
+        return ids[0] || null;
+      }
+    } catch {}
+    return null;
+  }
+
   return {
     name: 'openai',
     async complete({ system, messages, maxTokens = 512, signal }) {
       let r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, false), signal });
-      if (r.status === 404 && cleanModel !== 'llama-3.3-70b-versatile' && url.includes('groq.com')) {
-        console.warn(`Model ${cleanModel} not found on Groq, falling back to llama-3.3-70b-versatile...`);
-        r = await fetchImpl(url, { method: 'POST', headers, body: JSON.stringify({ model: 'llama-3.3-70b-versatile', stream: false, max_tokens: maxTokens, messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages] }), signal });
+      if (r.status === 404 && cleanKey.startsWith('gsk_')) {
+        const auto = await getAvailableModel();
+        if (auto && auto !== cleanModel) {
+          r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, false, auto), signal });
+        }
       }
       if (!r.ok) {
         let details = '';
@@ -45,9 +64,11 @@ export function openaiProvider({ baseUrl, apiKey = 'none', model = 'naru', fetch
     },
     async *stream({ system, messages, maxTokens = 1024, signal }) {
       let r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, true), signal });
-      if (r.status === 404 && cleanModel !== 'llama-3.3-70b-versatile' && url.includes('groq.com')) {
-        console.warn(`Model ${cleanModel} not found on Groq, falling back to llama-3.3-70b-versatile...`);
-        r = await fetchImpl(url, { method: 'POST', headers, body: JSON.stringify({ model: 'llama-3.3-70b-versatile', stream: true, max_tokens: maxTokens, messages: [...(system ? [{ role: 'system', content: system }] : []), ...messages] }), signal });
+      if (r.status === 404 && cleanKey.startsWith('gsk_')) {
+        const auto = await getAvailableModel();
+        if (auto && auto !== cleanModel) {
+          r = await fetchImpl(url, { method: 'POST', headers, body: body(system, messages, maxTokens, true, auto), signal });
+        }
       }
       if (!r.ok || !r.body) {
         let details = '';
